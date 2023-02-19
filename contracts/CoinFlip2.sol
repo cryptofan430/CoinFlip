@@ -2,17 +2,24 @@
 pragma solidity ^0.8.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+
 contract CoinFlip is Ownable {
 	struct User {
 		uint256 unclaimed; // Current Balance of the user
 		uint256 betCount;
 		uint256 winningCount;
-		bool betStatus; // True if betted, false otherwise
 	}
+	uint256[] public probabilities = [6, 4];
+	uint256 constant INVERSE_BASIS_POINT = 10;
 	address[] usersBetted;
 	mapping(address => User) public users;
 
-	event betCompleted(address bettor, bool status, uint256 betAmout);
+	event betCompleted(
+		address bettor,
+		bool status,
+		uint256 betAmount,
+		uint256 timeStamp
+	);
 	event userWithdrawal(address indexed caller, uint256 amount);
 
 	constructor() {}
@@ -33,21 +40,34 @@ contract CoinFlip is Ownable {
 			)
 		);
 
-		return (seed - ((seed / 1000) * 1000));
+		return (seed % INVERSE_BASIS_POINT);
 	}
 
-	function placeBet(bool _betchoice) external payable {
-		uint256 randVal = rand();
-		bool flipped = (randVal % 2) == 1;
+	function getPickId() internal view returns (uint256) {
+		uint256 value = rand();
+
+		for (uint256 i = probabilities.length - 1; i > 0; i--) {
+			uint256 probability = probabilities[i];
+			if (value < probability) {
+				return i;
+			} else {
+				value = value - probability;
+			}
+		}
+		return 0;
+	}
+
+	function placeBet(bool _betchoice, uint256 timeStamp) external payable {
+		uint256 randVal = getPickId();
+		bool flipped = (randVal == 1);
 		uint256 _betAmount = msg.value;
 		users[msg.sender].betCount++;
-		// uint256 winChoice = uint256(_vrf()) % 2;
-		if (flipped == _betchoice) {
-			users[msg.sender].unclaimed += _betAmount;
+		if (flipped) {
+			users[msg.sender].unclaimed += _betAmount * 2;
 			users[msg.sender].winningCount++;
 		}
 		usersBetted.push(msg.sender);
-		emit betCompleted(msg.sender, flipped == _betchoice, _betAmount);
+		emit betCompleted(msg.sender, flipped, _betAmount, timeStamp);
 	}
 
 	function claimRewards() external {
@@ -56,28 +76,17 @@ contract CoinFlip is Ownable {
 		require(amount > 0, "You have no rewards to claim");
 		address payable to = payable(msg.sender);
 		users[msg.sender].unclaimed = 0;
-		// users[msg.sender].betStatus = false;
 		to.transfer(amount);
 
 		emit userWithdrawal(msg.sender, amount);
 	}
 
-	function _vrf() private view returns (bytes32 result) {
-		uint256[1] memory bn;
-		bn[0] = block.number;
-		assembly {
-			let memPtr := mload(0x40)
-			if iszero(staticcall(not(0), 0xff, bn, 0x20, memPtr, 0x20)) {
-				invalid()
-			}
-			result := mload(memPtr)
-		}
-	}
-	
 	function getBalance() public view returns (uint256) {
 		return address(this).balance;
 	}
-	
+
+	function addMoney() external payable {}
+
 	function withdraw() external onlyOwner {
 		address payable to = payable(msg.sender);
 		to.transfer(getBalance());
